@@ -1,10 +1,9 @@
 blueprint:
-  name: Zigbee2MQTT – Tuya/Moes Dimmer Power Restore Fix
+  name: Zigbee2MQTT - Tuya/Moes Dimmer Power Restore Fix
   description: >
     Work around Tuya/Moes Zigbee dimmers (e.g. MS-105Z) that always boot in OFF
     state after mains power loss. Tracks desired ON/OFF + brightness in helpers and
     restores that state using Zigbee2MQTT MQTT messages. Optional debug logging.
-    file: config/blueprints/automation/tuya_ms105z_fix/tuya_ms105z_power_restore.yaml
   domain: automation
 
   input:
@@ -35,7 +34,7 @@ blueprint:
     last_brightness_number:
       name: Last brightness helper (input_number)
       description: >
-        input_number that stores the last desired brightness (1–254).
+        input_number that stores the last desired brightness (1-254).
         Example: input_number.work_counter_can_last_brightness
       selector:
         entity:
@@ -67,6 +66,7 @@ action:
   - variables:
       desired_boolean_entity: !input desired_state_boolean
       last_brightness_entity: !input last_brightness_number
+      light_entity_id: !input light_entity
       debug: !input enable_debug
 
   - choose:
@@ -77,7 +77,7 @@ action:
       - conditions: "{{ trigger.id == 'track_state' }}"
         sequence:
           - choose:
-              # Light turned ON → remember "should be on" + brightness
+              # Light turned ON -> remember "should be on" + brightness
               - conditions: "{{ trigger.to_state.state == 'on' }}"
                 sequence:
                   - service: input_boolean.turn_on
@@ -90,16 +90,17 @@ action:
                       value: >
                         {{ trigger.to_state.attributes.brightness | default(254) }}
 
-                  # Debug
-                  - if: '{{ debug }}'
-                    then:
-                      - service: logbook.log
-                        data:
-                          name: "MS105Z Power Fix (DEBUG)"
-                          message: >
-                            Tracking: Light turned ON. Saved brightness={{ trigger.to_state.attributes.brightness | default(254) }}.
+                  # Debug (optional)
+                  - choose:
+                      - conditions: "{{ debug }}"
+                        sequence:
+                          - service: logbook.log
+                            data:
+                              name: "MS105Z Power Fix (DEBUG)"
+                              message: >
+                                Tracking: Light turned ON. Saved brightness={{ trigger.to_state.attributes.brightness | default(254) }}.
 
-              # Light turned OFF → only accept this if the OFF came from a *user action*
+              # Light turned OFF -> only accept this if the OFF came from a user action
               - conditions: >
                   {{ trigger.to_state.state == 'off'
                      and trigger.to_state.context.user_id is not none }}
@@ -108,32 +109,36 @@ action:
                     target:
                       entity_id: !input desired_state_boolean
 
-                  # Debug
-                  - if: '{{ debug }}'
-                    then:
-                      - service: logbook.log
-                        data:
-                          name: "MS105Z Power Fix (DEBUG)"
-                          message: "Tracking: Light turned OFF by user. Desired state saved as OFF."
+                  # Debug (optional)
+                  - choose:
+                      - conditions: "{{ debug }}"
+                        sequence:
+                          - service: logbook.log
+                            data:
+                              name: "MS105Z Power Fix (DEBUG)"
+                              message: "Tracking: Light turned OFF by user. Desired state saved as OFF."
 
       # ------------------------------------------------------------------
       # 2) Restore previous ON state after power loss based on MQTT
       # ------------------------------------------------------------------
       - conditions: "{{ trigger.id == 'zigbee_state' }}"
         sequence:
+          # Give the state-triggered branch a moment to update helpers
+          - delay: "00:00:00.5"
           - variables:
               data: "{{ trigger.payload_json }}"
 
           # Debug incoming MQTT payload
-          - if: '{{ debug }}'
-            then:
-              - service: logbook.log
-                data:
-                  name: "MS105Z Power Fix (DEBUG)"
-                  message: >
-                    MQTT received: state={{ data.state | default('none') }},
-                    desired_state={{ states(desired_boolean_entity) }},
-                    HA_light_state={{ states(!input light_entity) }}
+          - choose:
+              - conditions: "{{ debug }}"
+                sequence:
+                  - service: logbook.log
+                    data:
+                      name: "MS105Z Power Fix (DEBUG)"
+                      message: >
+                        MQTT received: state={{ data.state | default('none') }},
+                        desired_state={{ states(desired_boolean_entity) }},
+                        HA_light_state={{ states(light_entity_id) }}
 
           # Only act if Z2M reports OFF AND our helper says it SHOULD be ON
           - condition: template
@@ -144,12 +149,13 @@ action:
                  and is_state(desired_boolean_entity, 'on') }}
 
           # Debug pass
-          - if: '{{ debug }}'
-            then:
-              - service: logbook.log
-                data:
-                  name: "MS105Z Power Fix (DEBUG)"
-                  message: "Condition passed. Restoring brightness after power loss..."
+          - choose:
+              - conditions: "{{ debug }}"
+                sequence:
+                  - service: logbook.log
+                    data:
+                      name: "MS105Z Power Fix (DEBUG)"
+                      message: "Condition passed. Restoring brightness after power loss..."
 
           # Small delay to let the dimmer stabilize
           - delay: "00:00:01"
@@ -163,10 +169,11 @@ action:
                 {{ states(last_brightness_entity) | int(254) }}
 
           # Debug restore
-          - if: '{{ debug }}'
-            then:
-              - service: logbook.log
-                data:
-                  name: "MS105Z Power Fix (DEBUG)"
-                  message: >
-                    Restored ON state with brightness={{ states(last_brightness_entity) }}.
+          - choose:
+              - conditions: "{{ debug }}"
+                sequence:
+                  - service: logbook.log
+                    data:
+                      name: "MS105Z Power Fix (DEBUG)"
+                      message: >
+                        Restored ON state with brightness={{ states(last_brightness_entity) }}.
